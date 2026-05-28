@@ -113,6 +113,7 @@ def _draw_miller_map(ax=None):
         if ax is None:
             ax = plt.gca()
         ax = plt.subplot(projection=ccrs.Miller())
+        ax.set_global()
         ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
         ax.add_feature(cfeature.BORDERS, linewidth=0.25)
         ax.add_feature(cfeature.LAND, facecolor='lightgray')
