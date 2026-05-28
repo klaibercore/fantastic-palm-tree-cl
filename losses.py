@@ -177,3 +177,74 @@ def compute_embedding_distances(
     ratio = neg_dist / (pos_dist + 1e-8)
 
     return pos_dist, neg_dist, ratio
+
+
+class GeographicAlignmentLoss(nn.Module):
+    """Align embedding distances with geographic distances.
+
+    For every pair of images in a batch, the loss encourages the L2 distance
+    between their embeddings to be proportional to their Haversine distance
+    on Earth. This gives the model continuous geographic signal from EVERY
+    pair — no binary thresholds needed.
+
+    This is a much stronger training signal than binary SupCon because it
+    preserves the full distance information, similar to how the sister
+    project's MSE regression uses exact (lon, lat) targets.
+    """
+
+    def __init__(self, max_haversine_km: float = 20000.0):
+        super().__init__()
+        self.max_km = max_haversine_km  # ~half Earth circumference
+
+    def forward(self, embeddings: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            embeddings: [N, D] embedding vectors.
+            coords: [N, 2] with [lon, lat] in degrees.
+
+        Returns:
+            Scalar loss (MSE between normalized embedding distance and
+            normalized Haversine distance, for all pairs).
+        """
+        N = embeddings.shape[0]
+        if N < 2:
+            return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+
+        # Pairwise embedding distances (L2)
+        emb_dist = torch.cdist(embeddings, embeddings, p=2)
+
+        # Pairwise Haversine distances (km), normalized to [0, 1]
+        geo_dist = compute_haversine_matrix(coords)
+        geo_dist_norm = geo_dist / self.max_km
+
+        # Exclude self-pairs
+        mask = ~torch.eye(N, dtype=torch.bool, device=embeddings.device)
+
+        # Normalize embedding distances to a comparable scale
+        # Use the batch's mean emb distance as a dynamic scale
+        scale = emb_dist[mask].detach().mean() + 1e-8
+        emb_dist_norm = emb_dist / scale
+
+        loss = F.mse_loss(emb_dist_norm[mask], geo_dist_norm[mask])
+        return loss
+
+
+def compute_geo_alignment_metrics(embeddings: torch.Tensor, coords: torch.Tensor):
+    """Compute Spearman correlation between embedding distance and geographic
+    distance — a direct measure of how well geography is encoded."""
+    from scipy.stats import spearmanr
+    import numpy as np
+
+    N = embeddings.shape[0]
+    if N < 4:
+        return 0.0
+
+    emb_dist = torch.cdist(embeddings, embeddings, p=2)
+    geo_dist = compute_haversine_matrix(coords)
+
+    mask = ~torch.eye(N, dtype=torch.bool)
+    e = emb_dist[mask].cpu().numpy()
+    g = geo_dist[mask].cpu().numpy()
+
+    corr, _ = spearmanr(e, g)
+    return float(corr)

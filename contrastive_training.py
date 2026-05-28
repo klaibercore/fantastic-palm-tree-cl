@@ -23,7 +23,8 @@ from models import (
     ContrastiveModel, FineTunedModel, count_parameters,
 )
 from losses import (
-    SupConLoss, build_geographic_labels, compute_embedding_distances,
+    GeographicAlignmentLoss, compute_embedding_distances,
+    compute_geo_alignment_metrics,
 )
 from datasets import CoordinateNormalizer
 from tensorboard_utils import start_tensorboard
@@ -329,10 +330,7 @@ class ContrastiveTrainer:
         )
         self.model = ContrastiveModel(encoder, projection).to(self.device)
 
-        self.criterion = SupConLoss(
-            temperature=self.config.contrastive.temperature,
-            base_temperature=self.config.contrastive.temperature,
-        )
+        self.criterion = GeographicAlignmentLoss()
 
         self.optimizer = self._make_optimizer()
         self.scheduler = self._make_scheduler()
@@ -385,17 +383,8 @@ class ContrastiveTrainer:
 
             self.optimizer.zero_grad()
 
-            # Forward: get L2-normalized projections
-            features = self.model(images)
-
-            # Build geographic label mask
-            geo_labels = build_geographic_labels(
-                targets,
-                pos_threshold_km=self.config.contrastive.pos_threshold_km,
-                neg_threshold_km=self.config.contrastive.neg_threshold_km,
-            )
-
-            loss = self.criterion(features, geo_labels)
+            embeddings = self.model.get_embeddings(images)
+            loss = self.criterion(embeddings, targets)
 
             if loss.item() > 0:
                 loss.backward()
@@ -418,30 +407,27 @@ class ContrastiveTrainer:
                 images = images.to(self.device)
                 targets = targets.to(self.device)
 
-                features = self.model(images)
-                geo_labels = build_geographic_labels(
-                    targets,
-                    pos_threshold_km=self.config.contrastive.pos_threshold_km,
-                    neg_threshold_km=self.config.contrastive.neg_threshold_km,
-                )
-                loss = self.criterion(features, geo_labels)
+                embeddings = self.model.get_embeddings(images)
+                loss = self.criterion(embeddings, targets)
                 total_loss += loss.item()
 
         return total_loss / len(self.val_loader)
 
     def _compute_pair_metrics(self):
-        """Compute positive/negative embedding distance metrics on a val batch."""
+        """Compute geographic alignment metrics on a val batch."""
         self.model.eval()
         with torch.no_grad():
             for images, targets in self.val_loader:
                 images = images.to(self.device)
                 targets = targets.to(self.device)
                 embeddings = self.model.get_embeddings(images)
-                return compute_embedding_distances(
+                pos_dist, neg_dist, ratio = compute_embedding_distances(
                     embeddings, targets,
                     self.config.contrastive.pos_threshold_km,
                     self.config.contrastive.neg_threshold_km,
                 )
+                geo_corr = compute_geo_alignment_metrics(embeddings, targets)
+                return pos_dist, neg_dist, ratio, geo_corr
 
     def train_phase1(self):
         """Run contrastive pre-training loop."""
@@ -472,7 +458,7 @@ class ContrastiveTrainer:
 
             train_loss = self.train_pretrain_epoch()
             val_loss = self.validate_pretrain_epoch()
-            pos_dist, neg_dist, ratio = self._compute_pair_metrics()
+            pos_dist, neg_dist, ratio, geo_corr = self._compute_pair_metrics()
 
             # Scheduler
             if self.scheduler is not None:
@@ -489,6 +475,7 @@ class ContrastiveTrainer:
                 self.writer.add_scalar('pretrain/metrics/pos_dist', pos_dist, step)
                 self.writer.add_scalar('pretrain/metrics/neg_dist', neg_dist, step)
                 self.writer.add_scalar('pretrain/metrics/pos_neg_ratio', ratio, step)
+                self.writer.add_scalar('pretrain/metrics/geo_spearman_corr', geo_corr, step)
                 self.writer.add_scalar('pretrain/lr', self.optimizer.param_groups[0]['lr'], step)
 
             # ── TensorBoard: embeddings projector (every epoch) ──
