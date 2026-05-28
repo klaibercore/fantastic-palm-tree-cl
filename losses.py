@@ -167,7 +167,9 @@ def compute_embedding_distances(
         return 0.0, 0.0, 0.0
 
     dist_matrix = compute_haversine_matrix(coords)
-    emb_distances = torch.cdist(embeddings, embeddings, p=2)
+    emb_norm = (embeddings ** 2).sum(dim=1, keepdim=True)
+    emb_dist_sq = emb_norm + emb_norm.T - 2 * torch.matmul(embeddings, embeddings.T)
+    emb_distances = torch.sqrt(torch.clamp(emb_dist_sq, min=1e-8))
 
     pos_mask = (dist_matrix < pos_threshold_km).fill_diagonal_(False)
     neg_mask = (dist_matrix > neg_threshold_km)
@@ -210,8 +212,10 @@ class GeographicAlignmentLoss(nn.Module):
         if N < 2:
             return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
 
-        # Pairwise embedding distances (L2)
-        emb_dist = torch.cdist(embeddings, embeddings, p=2)
+        # Pairwise embedding distances (L2) — manual for MPS compatibility
+        emb_norm = (embeddings ** 2).sum(dim=1, keepdim=True)
+        emb_dist_sq = emb_norm + emb_norm.T - 2 * torch.matmul(embeddings, embeddings.T)
+        emb_dist = torch.sqrt(torch.clamp(emb_dist_sq, min=1e-8))
 
         # Pairwise Haversine distances (km), normalized to [0, 1]
         geo_dist = compute_haversine_matrix(coords)
@@ -239,7 +243,9 @@ def compute_geo_alignment_metrics(embeddings: torch.Tensor, coords: torch.Tensor
     if N < 4:
         return 0.0
 
-    emb_dist = torch.cdist(embeddings, embeddings, p=2)
+    emb_norm = (embeddings ** 2).sum(dim=1, keepdim=True)
+    emb_dist_sq = emb_norm + emb_norm.T - 2 * torch.matmul(embeddings, embeddings.T)
+    emb_dist = torch.sqrt(torch.clamp(emb_dist_sq, min=1e-8))
     geo_dist = compute_haversine_matrix(coords)
 
     mask = ~torch.eye(N, dtype=torch.bool)
