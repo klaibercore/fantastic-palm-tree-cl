@@ -310,7 +310,7 @@ def main():
     # Access the underlying dataset to get image file paths for full-size display
     test_dataset = test_loader.dataset
     indices = list(range(len(test_dataset)))
-    random.shuffle(indices)
+    random.Random(config.training.random_seed).shuffle(indices)
     indices = indices[:args.num_samples]
 
     images, true_list, pred_list = [], [], []

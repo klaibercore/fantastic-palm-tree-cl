@@ -24,6 +24,7 @@ class GeographicEncoder(nn.Module):
         activation: str = "tanh",
         hidden_dim: int = 128,
         dropout_rate: float = 0.2,
+        image_size: int = 64,
     ):
         super().__init__()
 
@@ -36,6 +37,7 @@ class GeographicEncoder(nn.Module):
         self.pool_size = pool_size
         self.hidden_dim = hidden_dim
         self.dropout_rate = dropout_rate
+        self.image_size = image_size
 
         self.activation_name = activation.lower()
 
@@ -51,9 +53,12 @@ class GeographicEncoder(nn.Module):
             self.conv_layers.append(block)
             in_ch = out_ch
 
-        # Flattened size after 3 MaxPool4 ops on 64x64 input
-        h = 64 // (pool_size ** len(conv_channels))
-        w = 64 // (pool_size ** len(conv_channels))
+        # Flattened size after conv + pool operations
+        h = image_size
+        w = image_size
+        for _ in conv_channels:
+            h = h // pool_size
+            w = w // pool_size
         self.flattened_size = h * w * conv_channels[-1]
 
         # Embedding layer (before final projection)
@@ -112,6 +117,14 @@ class ProjectionHead(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, output_dim),
         )
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.net(x)
@@ -122,20 +135,22 @@ class RegressionHead(nn.Module):
     """Regression head for fine-tuning on (lon, lat) coordinates.
 
     Attached to the GeographicEncoder after contrastive pre-training.
+    Mirrors the final projection of the baseline LocationRegressor so
+    FineTunedModel is architecturally identical.
     """
 
-    def __init__(self, input_dim: int = 128, hidden_dim: int = 64, output_dim: int = 2,
-                 dropout_rate: float = 0.2):
+    def __init__(self, input_dim: int = 128, output_dim: int = 2):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(hidden_dim, output_dim),
-        )
+        self.fc = nn.Linear(input_dim, output_dim)
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        nn.init.xavier_uniform_(self.fc.weight)
+        if self.fc.bias is not None:
+            nn.init.constant_(self.fc.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        return self.fc(x)
 
 
 class ContrastiveModel(nn.Module):
@@ -185,6 +200,7 @@ def create_location_regressor(config):
         pool_size=config.model.pool_size,
         activation=config.model.activation,
         hidden_dim=config.model.hidden_dim,
+        image_size=config.data.image_size,
     )
     regression = RegressionHead(
         input_dim=config.model.hidden_dim,

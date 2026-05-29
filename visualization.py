@@ -321,15 +321,17 @@ def visualize_sample_images(
     coords: torch.Tensor,
     num_samples: int = 8,
     save_path: Optional[str] = None,
-    show_plot: bool = True
+    show_plot: bool = True,
+    seed: Optional[int] = None,
 ) -> None:
     """Visualize sample satellite images with their coordinates."""
     # Coordinates are already in raw [lon, lat] degrees
     coords_np = coords.cpu().numpy()
-    
+
     # Select random samples
     if len(images) > num_samples:
-        indices = np.random.choice(len(images), num_samples, replace=False)
+        rng = np.random.RandomState(seed) if seed is not None else np.random
+        indices = rng.choice(len(images), num_samples, replace=False)
         images = images[indices]
         coords_np = coords_np[indices]
     
@@ -376,7 +378,8 @@ def plot_predictions_on_world_map(
     pred_coords: torch.Tensor,
     save_path: Optional[str] = None,
     show_plot: bool = True,
-    max_points: int = 1000
+    max_points: int = 1000,
+    seed: Optional[int] = None,
 ) -> None:
     """Plot prediction errors on world map using cartopy (preferred) or basemap (fallback)."""
     if not HAS_CARTOPY and not HAS_BASEMAP:
@@ -391,7 +394,8 @@ def plot_predictions_on_world_map(
     distance_errors = np.sqrt(lon_errors**2 + lat_errors**2)
 
     if len(true_coords_np) > max_points:
-        indices = np.random.choice(len(true_coords_np), max_points, replace=False)
+        rng = np.random.RandomState(seed) if seed is not None else np.random
+        indices = rng.choice(len(true_coords_np), max_points, replace=False)
         true_coords_np = true_coords_np[indices]
         pred_coords_np = pred_coords_np[indices]
         distance_errors = distance_errors[indices]

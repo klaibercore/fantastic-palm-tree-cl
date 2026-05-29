@@ -168,23 +168,11 @@ def evaluate_model(config, model_path: str):
     """Evaluate a fine-tuned model on the test set."""
     logger.info(f"Evaluating model: {model_path}")
 
-    from models import GeographicEncoder, RegressionHead, FineTunedModel
+    from models import create_location_regressor
     from contrastive_dataset import create_contrastive_dataloaders
     from contrastive_training import ContrastiveTrainer
 
-    encoder = GeographicEncoder(
-        input_channels=config.model.input_channels,
-        conv_channels=config.model.conv_channels,
-        kernel_size=config.model.kernel_size,
-        pool_size=config.model.pool_size,
-        activation=config.model.activation,
-        hidden_dim=config.model.hidden_dim,
-    )
-    regression = RegressionHead(
-        input_dim=config.model.hidden_dim,
-        output_dim=config.model.output_dim,
-    )
-    model = FineTunedModel(encoder, regression)
+    model = create_location_regressor(config)
 
     # Load weights
     try:
@@ -209,7 +197,10 @@ def evaluate_model(config, model_path: str):
 
     # Create minimal dummy loaders for trainer init
     from torch.utils.data import DataLoader, TensorDataset
-    dummy_data = TensorDataset(torch.zeros(1, 3, 64, 64), torch.zeros(1, 2))
+    dummy_data = TensorDataset(
+        torch.zeros(1, config.model.input_channels, config.data.image_size, config.data.image_size),
+        torch.zeros(1, 2),
+    )
     dummy_loader = DataLoader(dummy_data, batch_size=1)
 
     trainer = ContrastiveTrainer(dummy_loader, test_loader, config)

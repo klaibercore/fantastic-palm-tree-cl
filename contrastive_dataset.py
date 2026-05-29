@@ -89,7 +89,7 @@ def create_contrastive_dataloaders(
         grayscale=config.data.grayscale,
     )
 
-    # Create datasets — ContrastiveDataset directly, not wrapped SatelliteImageDataset
+    # Create datasets using ContrastiveDataset (wraps SatelliteImageDataset)
     common_kwargs = dict(
         image_dir=config.data.images_dir,
         metadata_dir=config.data.combined_dir,
@@ -100,18 +100,14 @@ def create_contrastive_dataloaders(
         grayscale=config.data.grayscale,
     )
 
-    # Override transforms on the base dataset since ContrastiveDataset delegates
-    train_base = SatelliteImageDataset(transform=transform, split="train", **{
-        k: v for k, v in common_kwargs.items() if k in SatelliteImageDataset.__init__.__code__.co_varnames
-    })
+    train_dataset = ContrastiveDataset(split="train", **common_kwargs)
+    val_dataset = ContrastiveDataset(split="val", **common_kwargs)
+    test_dataset = ContrastiveDataset(split="test", **common_kwargs)
 
-    val_base = SatelliteImageDataset(transform=transform, split="val", **{
-        k: v for k, v in common_kwargs.items() if k in SatelliteImageDataset.__init__.__code__.co_varnames
-    })
-
-    test_base = SatelliteImageDataset(transform=transform, split="test", **{
-        k: v for k, v in common_kwargs.items() if k in SatelliteImageDataset.__init__.__code__.co_varnames
-    })
+    # Override transforms on the underlying SatelliteImageDataset
+    train_dataset.base_dataset.transform = transform
+    val_dataset.base_dataset.transform = transform
+    test_dataset.base_dataset.transform = transform
 
     dl_kwargs_train = dict(
         batch_size=batch_size, shuffle=True,
@@ -123,9 +119,9 @@ def create_contrastive_dataloaders(
         num_workers=num_workers, pin_memory=pin_memory,
     )
 
-    train_loader = DataLoader(train_base, **dl_kwargs_train)
-    val_loader = DataLoader(val_base, **dl_kwargs_eval)
-    test_loader = DataLoader(test_base, **dl_kwargs_eval)
+    train_loader = DataLoader(train_dataset, **dl_kwargs_train)
+    val_loader = DataLoader(val_dataset, **dl_kwargs_eval)
+    test_loader = DataLoader(test_dataset, **dl_kwargs_eval)
 
     return train_loader, val_loader, test_loader
 
@@ -166,10 +162,9 @@ def create_full_contrastive_loader(config, batch_size: int = 32, num_workers: in
     )
 
     # Put all data into the train split
-    full_dataset = SatelliteImageDataset(
+    full_dataset = ContrastiveDataset(
         image_dir=config.data.images_dir,
         metadata_dir=config.data.combined_dir,
-        transform=transform,
         split="train",
         train_split=1.0,
         val_split=0.0,
@@ -177,6 +172,7 @@ def create_full_contrastive_loader(config, batch_size: int = 32, num_workers: in
         image_size=config.data.image_size,
         grayscale=config.data.grayscale,
     )
+    full_dataset.base_dataset.transform = transform
 
     logger.info(f"Full dataset: {len(full_dataset)} samples")
 

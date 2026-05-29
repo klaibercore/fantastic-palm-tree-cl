@@ -125,8 +125,10 @@ class ContrastiveTrainer:
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Finetune phase uses 'run_' prefix to match baseline UnifiedTrainer
+        folder = f"run_{timestamp}" if phase_tag == "finetune" else f"{phase_tag}_{timestamp}"
         self.tensorboard_run_dir = os.path.join(
-            self.config.training.log_dir, f"{phase_tag}_{timestamp}"
+            self.config.training.log_dir, folder
         )
         os.makedirs(self.tensorboard_run_dir, exist_ok=True)
         self.writer = SummaryWriter(log_dir=self.tensorboard_run_dir)
@@ -323,6 +325,7 @@ class ContrastiveTrainer:
             pool_size=self.config.model.pool_size,
             activation=self.config.model.activation,
             hidden_dim=self.config.model.hidden_dim,
+            image_size=self.config.data.image_size,
         )
         projection = ProjectionHead(
             input_dim=self.config.model.hidden_dim,
@@ -536,6 +539,7 @@ class ContrastiveTrainer:
             pool_size=self.config.model.pool_size,
             activation=self.config.model.activation,
             hidden_dim=self.config.model.hidden_dim,
+            image_size=self.config.data.image_size,
         )
 
         # Load pre-trained weights
@@ -571,6 +575,10 @@ class ContrastiveTrainer:
         self.scheduler = self._make_scheduler()
         self.best_val_loss = float('inf')
         self.phase = 'finetune'
+
+        # Recompute normalizer on the fine-tuning train split for comparability
+        # with the baseline (which only sees the 80% train split)
+        self._setup_coordinate_normalizer()
 
         logger.info(f"Phase 2 (finetune): {count_parameters(self.model):,} parameters")
 
@@ -674,17 +682,18 @@ class ContrastiveTrainer:
                     self.scheduler.step()
 
             # ── TensorBoard: scalars (every epoch) ──
+            # Tag names mirror the baseline UnifiedTrainer for direct comparison
             if self.writer is not None:
                 step = epoch
-                self.writer.add_scalar('finetune/loss/train', train_loss, step)
-                self.writer.add_scalar('finetune/loss/val', val_loss, step)
-                self.writer.add_scalar('finetune/metrics/coord_error_deg', coord_error, step)
-                self.writer.add_scalar('finetune/metrics/haversine_km', haversine, step)
-                self.writer.add_scalar('finetune/lr', self.optimizer.param_groups[0]['lr'], step)
+                self.writer.add_scalar('loss/train', train_loss, step)
+                self.writer.add_scalar('loss/val', val_loss, step)
+                self.writer.add_scalar('metrics/coord_error_deg', coord_error, step)
+                self.writer.add_scalar('metrics/haversine_km', haversine, step)
+                self.writer.add_scalar('lr', self.optimizer.param_groups[0]['lr'], step)
 
             # ── TensorBoard: embeddings projector (every epoch) ──
             if self.writer is not None:
-                self._log_embeddings_tensorboard(self.val_loader, "finetune")
+                self._log_embeddings_tensorboard(self.val_loader, "model_embeddings")
 
             # ── TensorBoard: histograms + images (periodic) ──
             if self.writer is not None and epoch % 5 == 0:
@@ -709,17 +718,28 @@ class ContrastiveTrainer:
         # Save final model
         self._save_full_model("regressor_finetuned.pth")
 
-        # Log hparams
+        # Log hparams (aligned with baseline UnifiedTrainer for direct comparison)
         if self.writer is not None:
-            hparam_dict = {k: str(v) for k, v in {
-                'phase': 'finetune', 'encoder_path': encoder_path,
-                'freeze_backbone': self.config.contrastive.freeze_backbone,
+            hparam_dict = {
                 'lr': self.config.training.learning_rate,
                 'batch_size': self.config.training.batch_size,
                 'epochs': self.config.training.max_epochs,
-            }.items()}
+                'optimizer': self.config.training.optimizer,
+                'loss_fn': self.config.training.loss_function,
+                'scheduler': self.config.training.scheduler,
+                'weight_decay': self.config.training.weight_decay,
+                'device': str(self.device),
+                'image_size': self.config.data.image_size,
+                'conv_channels': str(self.config.model.conv_channels),
+                'hidden_dim': self.config.model.hidden_dim,
+                'params': sum(p.numel() for p in self.model.parameters()),
+                'phase': 'finetune',
+                'freeze_backbone': str(self.config.contrastive.freeze_backbone),
+            }
             self.writer.add_hparams(hparam_dict, {
                 'hparam/best_val_loss': self.best_val_loss,
+                'hparam/final_train_loss': train_loss,
+                'hparam/final_val_loss': val_loss,
                 'hparam/final_coord_error_deg': coord_error,
                 'hparam/final_haversine_km': haversine,
             }, run_name='.')

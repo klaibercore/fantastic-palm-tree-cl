@@ -49,6 +49,7 @@ def _load_model_for_embeddings(config, model_path: str):
             pool_size=config.model.pool_size,
             activation=config.model.activation,
             hidden_dim=config.model.hidden_dim,
+            image_size=config.data.image_size,
         )
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         if 'encoder_state_dict' in checkpoint:
@@ -81,6 +82,7 @@ def _load_model_for_embeddings(config, model_path: str):
             pool_size=config.model.pool_size,
             activation=config.model.activation,
             hidden_dim=config.model.hidden_dim,
+            image_size=config.data.image_size,
         )
         regression = RegressionHead(
             input_dim=config.model.hidden_dim,

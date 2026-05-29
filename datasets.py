@@ -152,7 +152,7 @@ class SatelliteImageDataset(Dataset):
         return image, coords
 
 
-def create_transforms(image_size: int = 64, grayscale: bool = True) -> transforms.Compose:
+def create_transforms(image_size: int = 64, grayscale: bool = False) -> transforms.Compose:
     """Create image transformation pipeline."""
     transform_list = []
     
